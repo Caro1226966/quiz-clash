@@ -278,14 +278,14 @@ async function discoverModel(apiKey) {
         m.name.includes("gemini")
     );
     
-    // Prefer 1.5 flash, then 1.5 pro, then anything with vision, then anything else
-    const preferred = models.find(m => m.name.includes("1.5-flash")) || 
-                      models.find(m => m.name.includes("1.5-pro")) ||
-                      models.find(m => m.name.includes("vision")) ||
+    // Prefer 3.6 flash (latest in 2026), then any flash, then pro
+    const preferred = models.find(m => m.name.includes("3.6-flash")) || 
+                      models.find(m => m.name.includes("flash") && !m.name.includes("2.5")) ||
+                      models.find(m => m.name.includes("pro")) ||
                       models[0];
                       
     if (!preferred) throw new Error("Your API key does not have access to any Gemini models for generation.");
-    activeGeminiModel = preferred.name; // e.g. "models/gemini-1.5-flash"
+    activeGeminiModel = preferred.name; // e.g. "models/gemini-3.6-flash"
     return activeGeminiModel;
 }
 
