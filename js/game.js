@@ -283,7 +283,11 @@ async function callGemini(prompt, base64Image = null) {
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || "Gemini API Error");
+    if (!res.ok) {
+        if (res.status === 400) throw new Error("API Error 400: API Key might be invalid or lacks permissions.");
+        if (res.status === 429) throw new Error("API Error 429: Too Many Requests. (Free tier limit reached).");
+        throw new Error(data.error?.message || `API Error ${res.status}`);
+    }
     if (!data.candidates || data.candidates.length === 0) throw new Error("Gemini returned no response (possibly blocked by safety filters).");
     return data.candidates[0].content.parts[0].text;
 }
@@ -325,6 +329,7 @@ async function processPDF(file) {
 
     document.getElementById('upload-status-text').textContent = "AI analyzing questions...";
     const questions = [];
+    let apiErrorEncountered = null;
     
     const prompt = `You are analyzing exam paper pages. Identify all individual questions on this page.
 For each question, extract:
@@ -345,19 +350,19 @@ Do NOT return anything other than the JSON array.`;
                  parsed = parseGeminiJson(result);
             } catch (jsonErr) {
                  console.warn("Failed to parse Gemini output for page " + (i+1) + ":", result);
-                 continue; // Skip this page if we can't parse it
+                 continue; 
             }
             if (!Array.isArray(parsed)) parsed = [parsed];
             
-            // Crop images and solve
             for (let q of parsed) {
                 document.getElementById('upload-status-text').textContent = `Solving Q${q.question_number}...`;
                 
-                // Crop
                 const canvas = pageImages[i].canvas;
                 const cropCanvas = document.createElement('canvas');
                 const ctx = cropCanvas.getContext('2d');
                 
+                // Safety check for bbox
+                if (!q.bbox) q.bbox = {top: 0, left: 0, bottom: 100, right: 100};
                 let top = Math.max(0, (q.bbox.top / 100) - 0.05) * canvas.height;
                 let left = Math.max(0, (q.bbox.left / 100) - 0.05) * canvas.width;
                 let bottom = Math.min(1, (q.bbox.bottom / 100) + 0.05) * canvas.height;
@@ -369,8 +374,7 @@ Do NOT return anything other than the JSON array.`;
                 
                 const qImage = cropCanvas.toDataURL('image/jpeg', 0.8);
                 
-                // Solve
-                const solvePrompt = `You are an expert tutor. Solve this step by step.\nQuestion: ${q.text}\nProvide your FINAL ANSWER on the last line, preceded by "FINAL ANSWER: ". Keep it concise (e.g. just the value/expression).`;
+                const solvePrompt = `You are an expert tutor. Solve this step by step.\nQuestion: ${q.text}\nProvide your FINAL ANSWER on the last line, preceded by "FINAL ANSWER: ". Keep it concise.`;
                 const solveResult = await callGemini(solvePrompt, qImage);
                 const lines = solveResult.split('\n');
                 let solution = "Unknown";
@@ -382,17 +386,27 @@ Do NOT return anything other than the JSON array.`;
                 }
                 
                 questions.push({
-                    text: q.text,
+                    text: q.text || "Unknown question",
                     marks: q.marks || 2,
                     image: qImage,
                     solution: solution,
-                    number: q.question_number
+                    number: q.question_number || "?"
                 });
             }
         } catch(e) {
             console.error("Failed page", i, e);
+            apiErrorEncountered = e.message;
+            // Stop processing if it's an API error (e.g., 400 Bad Request, 429 Rate Limit)
+            if (e.message.includes("API Error") || e.message.includes("Missing")) {
+                break; 
+            }
         }
     }
+    
+    if (questions.length === 0 && apiErrorEncountered) {
+        throw new Error("AI Error: " + apiErrorEncountered);
+    }
+    
     return questions;
 }
 
