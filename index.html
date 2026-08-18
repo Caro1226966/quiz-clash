@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Clash! 📝</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <!-- PeerJS for P2P networking -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- PDF.js for in-browser PDF parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+</head>
+<body>
+
+    <!-- Confetti Canvas -->
+    <canvas id="confetti-canvas"></canvas>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- API Key Modal -->
+    <div id="api-key-modal" class="modal-overlay" style="display:none">
+        <div class="modal-card">
+            <h3>Setup Required ⚙️</h3>
+            <p>To host a game, you need a free Google Gemini API key (this tells the AI to read your PDF).</p>
+            <p class="hint-text"><a href="https://aistudio.google.com/apikey" target="_blank">Get your free key here</a></p>
+            <input type="password" id="api-key-input" class="text-input" placeholder="AIzaSy...">
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeApiModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveApiKey()">Save & Host</button>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        <!-- ==================== MENU SCREEN ==================== -->
+        <div id="screen-menu" class="screen active">
+            <div class="floating-emojis">
+                <span class="float-emoji" style="--delay:0s;--x:10%">📝</span>
+                <span class="float-emoji" style="--delay:1.5s;--x:80%">🎮</span>
+                <span class="float-emoji" style="--delay:3s;--x:30%">🏆</span>
+                <span class="float-emoji" style="--delay:4.5s;--x:65%">⭐</span>
+                <span class="float-emoji" style="--delay:6s;--x:50%">🧠</span>
+                <span class="float-emoji" style="--delay:2s;--x:90%">✨</span>
+            </div>
+            <div class="card menu-card">
+                <h1 class="game-title">Quiz Clash! <span class="bounce-emoji">📝</span></h1>
+                <p class="subtitle">Challenge your friends with past paper questions!</p>
+                <div class="menu-buttons">
+                    <button id="btn-host-game" class="btn btn-primary btn-large">🎮 Host Game</button>
+                    <button id="btn-join-game" class="btn btn-secondary btn-large">🚀 Join Game</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== HOST SETUP SCREEN ==================== -->
+        <div id="screen-host-setup" class="screen">
+            <div class="card">
+                <button class="btn-back back-btn">← Cancel</button>
+                <h2>Upload Past Paper 📄</h2>
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-content">
+                        <span class="drop-icon">📁</span>
+                        <p>Drag & drop your PDF here</p>
+                        <p class="drop-hint">or click to browse</p>
+                    </div>
+                    <input type="file" id="pdf-upload" accept=".pdf" hidden>
+                </div>
+                <div id="upload-status" class="status-area hidden">
+                    <div class="spinner"></div>
+                    <p id="upload-status-text">Processing PDF locally...</p>
+                    <p id="upload-detail-text" class="status-detail"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== NAME ENTRY SCREEN ==================== -->
+        <div id="screen-name" class="screen">
+            <div class="card">
+                <button class="btn-back back-btn">← Leave</button>
+                <h2>Choose Your Name ✏️</h2>
+                <input type="text" id="player-name-input" class="text-input" placeholder="Enter your name..." maxlength="20" autocomplete="off">
+                <button id="btn-submit-name" class="btn btn-primary">Continue →</button>
+            </div>
+        </div>
+
+        <!-- ==================== JOIN SCREEN ==================== -->
+        <div id="screen-join" class="screen">
+            <div class="card">
+                <button class="btn-back back-btn">← Back</button>
+                <h2>Enter Room Code 🔑</h2>
+                <input type="text" id="room-code-input" class="text-input code-input" placeholder="ABCD" maxlength="4" autocomplete="off" style="text-transform:uppercase;letter-spacing:12px;text-align:center;font-size:2rem;">
+                <p id="join-error" class="error-text hidden"></p>
+                <div id="join-status" class="status-area hidden">
+                    <div class="spinner"></div>
+                    <p>Connecting to host...</p>
+                </div>
+                <button id="btn-submit-join" class="btn btn-primary">Join →</button>
+            </div>
+        </div>
+
+        <!-- ==================== LOBBY SCREEN ==================== -->
+        <div id="screen-lobby" class="screen">
+            <div class="card">
+                <h2>Game Lobby 🏠</h2>
+                <div id="room-code-box" class="room-code-box">
+                    <span class="code-label">Room Code</span>
+                    <span id="lobby-room-code" class="room-code">----</span>
+                    <span class="tooltip">Copied!</span>
+                </div>
+                <div id="question-count-badge" class="badge hidden">0 questions ready!</div>
+                <h3>Players</h3>
+                <ul id="player-list" class="player-list"></ul>
+                <div id="host-controls" class="hidden">
+                    <button id="btn-start-game" class="btn btn-primary btn-large" disabled>
+                        🎮 Start Game
+                    </button>
+                </div>
+                <div id="waiting-host-msg">
+                    <p class="waiting-text">Waiting for host to start... ⏳</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== QUESTION SCREEN ==================== -->
+        <div id="screen-question" class="screen">
+            <div class="card question-card">
+                <div class="question-header">
+                    <span id="current-q" class="q-badge">Question 1</span> of <span id="total-q" class="q-badge">?</span>
+                    <span id="q-marks" class="marks-badge">? marks</span>
+                </div>
+                <div class="timer-container">
+                    <svg class="timer-svg" viewBox="0 0 100 100">
+                        <circle class="timer-bg" cx="50" cy="50" r="45" />
+                        <circle class="timer-path" cx="50" cy="50" r="45" />
+                    </svg>
+                    <span id="timer-text" class="timer-text">60</span>
+                </div>
+                <div id="lives-container" class="lives-display"></div>
+                <div class="question-image-container">
+                    <img id="question-image" src="" alt="Question" style="display:none">
+                    <p id="question-text" style="font-weight:600; margin: 10px 0;"></p>
+                </div>
+                <div class="answer-area">
+                    <input type="text" id="answer-input" class="text-input" placeholder="Type your answer..." autocomplete="off">
+                    <button id="btn-submit-answer" class="btn btn-primary">Submit ✓</button>
+                </div>
+                <p class="progress-text"><span id="players-answered">0</span> of <span id="total-players-q">0</span> players answered</p>
+                <div id="grading-spinner" class="status-area hidden" style="padding:0">
+                    <div class="spinner" style="width:20px;height:20px;border-width:3px"></div>
+                    <span style="font-size:0.85rem">Grading...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== CORRECT SCREEN ==================== -->
+        <div id="screen-correct" class="screen">
+            <div class="card result-card correct-card">
+                <div class="result-icon">✅</div>
+                <h2>Correct! 🎉</h2>
+                <p id="points-earned-display" class="points-text">+3 points</p>
+                <p class="waiting-text">Waiting for other players... ⏳</p>
+            </div>
+        </div>
+
+        <!-- ==================== WRONG SCREEN ==================== -->
+        <div id="screen-wrong" class="screen">
+            <div class="card result-card wrong-card">
+                <div class="result-icon">❌</div>
+                <h2>Not quite! 😅</h2>
+                <p id="wrong-message" class="wrong-msg"></p>
+                <div id="wrong-lives" class="lives-display"></div>
+                <p id="wrong-action" class="waiting-text"></p>
+            </div>
+        </div>
+
+        <!-- ==================== SCOREBOARD SCREEN ==================== -->
+        <div id="screen-scoreboard" class="screen">
+            <div class="card">
+                <h2 id="scoreboard-title">Round Results 📊</h2>
+                <div id="scoreboard-list" class="scoreboard"></div>
+                <div id="host-next-btn-container" class="hidden">
+                    <button id="btn-next-question" class="btn btn-primary btn-large">Next Question ➡️</button>
+                </div>
+                <div id="waiting-next-msg">
+                    <p class="waiting-text">Waiting for host... ⏳</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== FINAL RESULTS SCREEN ==================== -->
+        <div id="screen-final" class="screen">
+            <div class="card final-card">
+                <h2>Game Over! 🏆</h2>
+                <div class="winner-display">
+                    <span class="crown">👑</span>
+                    <h3 id="winner-name" class="winner-name"></h3>
+                </div>
+                <!-- <div id="podium" class="podium"></div> -->
+                <div id="final-scoreboard-list" class="scoreboard"></div>
+                <button id="btn-return-home" class="btn btn-primary btn-large">Return Home 🏠</button>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/game.js"></script>
+</body>
+</html>
