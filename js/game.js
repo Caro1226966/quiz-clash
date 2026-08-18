@@ -334,6 +334,25 @@ function parseGeminiJson(text) {
     }
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function callGeminiWithRetry(prompt, base64Image = null, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await callGemini(prompt, base64Image);
+        } catch (e) {
+            if (e.message.includes("429") && i < retries - 1) {
+                console.warn("Rate limit hit. Waiting 10 seconds before retrying...");
+                const detailText = document.getElementById('upload-detail-text');
+                if (detailText) detailText.textContent = "API limit reached. Waiting 10s to continue...";
+                await sleep(10000);
+            } else {
+                throw e;
+            }
+        }
+    }
+}
+
 // ===== PDF.js PROCESSING =====
 async function processPDF(file) {
     document.getElementById('upload-status-text').textContent = "Extracting pages...";
@@ -364,6 +383,7 @@ For each question, extract:
 2. "marks": The integer number of marks the question is worth (e.g., look for "[3 marks]", "(3)", etc.). If not found, use 2.
 3. "text": The full text of the question.
 4. "bbox": The bounding box of the question as percentage coordinates from 0 to 100: {"top": X, "left": Y, "bottom": Z, "right": W}.
+5. "solution": As an expert tutor, solve this question internally step-by-step, but provide ONLY the final concise answer here (e.g. just the final numeric value, expression, or term).
 
 CRITICAL: You MUST return a valid JSON array of these objects. If there are no questions on the page, return an empty array: []
 Do NOT return anything other than the JSON array.`;
@@ -371,7 +391,7 @@ Do NOT return anything other than the JSON array.`;
     for (let i = 0; i < pageImages.length; i++) {
         document.getElementById('upload-detail-text').textContent = `Page ${i+1}/${pageImages.length}`;
         try {
-            const result = await callGemini(prompt, pageImages[i].dataUrl);
+            const result = await callGeminiWithRetry(prompt, pageImages[i].dataUrl);
             let parsed = [];
             try {
                  parsed = parseGeminiJson(result);
@@ -382,7 +402,7 @@ Do NOT return anything other than the JSON array.`;
             if (!Array.isArray(parsed)) parsed = [parsed];
             
             for (let q of parsed) {
-                document.getElementById('upload-status-text').textContent = `Solving Q${q.question_number}...`;
+                document.getElementById('upload-status-text').textContent = `Cropping Q${q.question_number}...`;
                 
                 const canvas = pageImages[i].canvas;
                 const cropCanvas = document.createElement('canvas');
@@ -401,30 +421,18 @@ Do NOT return anything other than the JSON array.`;
                 
                 const qImage = cropCanvas.toDataURL('image/jpeg', 0.8);
                 
-                const solvePrompt = `You are an expert tutor. Solve this step by step.\nQuestion: ${q.text}\nProvide your FINAL ANSWER on the last line, preceded by "FINAL ANSWER: ". Keep it concise.`;
-                const solveResult = await callGemini(solvePrompt, qImage);
-                const lines = solveResult.split('\n');
-                let solution = "Unknown";
-                for (let line of [...lines].reverse()) {
-                    if (line.includes("FINAL ANSWER:")) {
-                        solution = line.replace("FINAL ANSWER:", "").trim();
-                        break;
-                    }
-                }
-                
                 questions.push({
                     text: q.text || "Unknown question",
                     marks: q.marks || 2,
                     image: qImage,
-                    solution: solution,
+                    solution: q.solution || "Unknown",
                     number: q.question_number || "?"
                 });
             }
         } catch(e) {
             console.error("Failed page", i, e);
             apiErrorEncountered = e.message;
-            // Stop processing if it's an API error (e.g., 400 Bad Request, 429 Rate Limit)
-            if (e.message.includes("API Error") || e.message.includes("Missing")) {
+            if (e.message.includes("API Error") || e.message.includes("Missing") || e.message.includes("429")) {
                 break; 
             }
         }
@@ -570,7 +578,7 @@ VERDICT: CORRECT or INCORRECT
 REASON: brief reason`;
         
         try {
-            const res = await callGemini(prompt);
+            const res = await callGeminiWithRetry(prompt);
             const isCorrect = res.includes('VERDICT: CORRECT');
             
             if (isCorrect) {
