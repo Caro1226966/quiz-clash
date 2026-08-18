@@ -555,6 +555,8 @@ async function handleClientMessage(peerId, msg) {
         const q = hostGameState.questions[hostGameState.currentQIndex];
         if (!p || p.answered || p.locked_out || !q) return;
         
+        const submitTime = Date.now();
+        hostGameState.gradingCount = (hostGameState.gradingCount || 0) + 1;
         sendToClient(peerId, 'grading_start', {});
         
         // Use Gemini to validate
@@ -571,9 +573,8 @@ REASON: brief reason`;
             const res = await callGemini(prompt);
             const isCorrect = res.includes('VERDICT: CORRECT');
             
-            const timeTaken = (Date.now() - hostGameState.qStartTime) / 1000;
-            
             if (isCorrect) {
+                const timeTaken = (submitTime - hostGameState.qStartTime) / 1000;
                 const minutes = Math.floor(timeTaken / 60);
                 const points = Math.max(0, q.marks - minutes);
                 p.score += points;
@@ -592,11 +593,21 @@ REASON: brief reason`;
             
             broadcast('player_answered', {answered: answeredCount, total: Object.keys(hostGameState.players).length});
             
-            if (allDone) endRound();
+            hostGameState.gradingCount--;
+            if (allDone || (hostGameState.waitingToEnd && hostGameState.gradingCount === 0)) {
+                hostGameState.waitingToEnd = false;
+                endRound();
+            }
             
         } catch(e) {
+            hostGameState.gradingCount--;
             sendToClient(peerId, 'error', {message: "Failed to grade answer"});
             sendToClient(peerId, 'grading_end', {});
+            
+            if (hostGameState.waitingToEnd && hostGameState.gradingCount === 0) {
+                hostGameState.waitingToEnd = false;
+                endRound();
+            }
         }
     }
 }
@@ -642,6 +653,10 @@ function nextQuestion() {
 
 function endRound() {
     clearTimeout(hostGameState.roundTimeout);
+    if (hostGameState.gradingCount > 0) {
+        hostGameState.waitingToEnd = true;
+        return;
+    }
     const scores = Object.values(hostGameState.players).sort((a,b) => b.score - a.score);
     broadcast('round_results', {
         scores: scores.map(s => ({name: s.name, score: s.score, round_points: s.round_points || 0})),
@@ -716,6 +731,7 @@ function handleServerMessage(msg) {
     
     if (type === 'answer_result') {
         document.getElementById('grading-spinner').classList.add('hidden');
+        updateLives('lives-container', data.lives);
         if (data.correct) {
             sounds.playCorrect();
             document.getElementById('points-earned-display').textContent = `+${data.points_earned} points`;
@@ -745,39 +761,60 @@ function handleServerMessage(msg) {
     if (type === 'round_results') {
         clearInterval(state.timerInterval);
         document.getElementById('scoreboard-title').textContent = `Round ${data.question_number} Results 📊`;
-        const list = document.getElementById('scoreboard-list');
-        list.innerHTML = '';
+        const container = document.getElementById('scoreboard-list');
+        
+        let html = `<div class="scoreboard-table">
+            <div class="scoreboard-header">
+                <span>Rank</span><span>Name</span><span>Round</span><span>Total</span>
+            </div>
+            <div class="scoreboard-list">`;
+            
         data.scores.forEach((s, idx) => {
-            const row = document.createElement('div');
-            row.className = 'score-entry';
-            row.innerHTML = `<div class="score-rank">${idx === 0 ? '👑' : idx+1}</div>
-                             <div class="score-name">${s.name}</div>
-                             <div class="score-round">+${s.round_points}</div>
-                             <div class="score-total">${s.score}</div>`;
-            list.appendChild(row);
+            html += `<div class="score-row">
+                <span>${idx === 0 ? '👑' : idx+1}</span>
+                <span>${s.name}</span>
+                <span class="round-pts">+${s.round_points}</span>
+                <span>${s.score}</span>
+            </div>`;
         });
+        
+        html += `</div></div>`;
+        container.innerHTML = html;
+        
+        showScreen('screen-scoreboard');
         
         if (state.isHost) {
             document.getElementById('host-next-btn-container').classList.remove('hidden');
             document.getElementById('waiting-next-msg').classList.add('hidden');
             document.getElementById('btn-next-question').textContent = 
                 (data.question_number === data.total_questions) ? 'Finish Game 🏁' : 'Next Question ➡️';
+        } else {
+            document.getElementById('host-next-btn-container').classList.add('hidden');
+            document.getElementById('waiting-next-msg').classList.remove('hidden');
         }
-        showScreen('screen-scoreboard');
     }
     
     if (type === 'game_over') {
         document.getElementById('winner-name').textContent = data.winner;
-        const list = document.getElementById('final-scoreboard-list');
-        list.innerHTML = '';
+        const container = document.getElementById('final-scoreboard-list');
+        
+        let html = `<div class="scoreboard-table">
+            <div class="scoreboard-header">
+                <span>Rank</span><span>Name</span><span>Total Score</span>
+            </div>
+            <div class="scoreboard-list">`;
+            
         data.scores.forEach((s, idx) => {
-            const row = document.createElement('div');
-            row.className = 'score-entry';
-            row.innerHTML = `<div class="score-rank">${idx === 0 ? '👑' : idx+1}</div>
-                             <div class="score-name">${s.name}</div>
-                             <div class="score-total">${s.score} pts</div>`;
-            list.appendChild(row);
+            html += `<div class="score-row">
+                <span>${idx === 0 ? '🏆' : idx+1}</span>
+                <span>${s.name}</span>
+                <span>${s.score}</span>
+            </div>`;
         });
+        
+        html += `</div></div>`;
+        container.innerHTML = html;
+        
         showScreen('screen-final');
         confetti.start();
     }
