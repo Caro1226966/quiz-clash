@@ -264,10 +264,37 @@ function setTimer(seconds, onExpire = null) {
     state.timerInterval = setInterval(update, 1000);
 }
 
+let activeGeminiModel = null;
+
+async function discoverModel(apiKey) {
+    if (activeGeminiModel) return activeGeminiModel;
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error("Could not list models: " + data.error?.message);
+    
+    const models = data.models.filter(m => 
+        m.supportedGenerationMethods && 
+        m.supportedGenerationMethods.includes("generateContent") &&
+        m.name.includes("gemini")
+    );
+    
+    // Prefer 1.5 flash, then 1.5 pro, then anything with vision, then anything else
+    const preferred = models.find(m => m.name.includes("1.5-flash")) || 
+                      models.find(m => m.name.includes("1.5-pro")) ||
+                      models.find(m => m.name.includes("vision")) ||
+                      models[0];
+                      
+    if (!preferred) throw new Error("Your API key does not have access to any Gemini models for generation.");
+    activeGeminiModel = preferred.name; // e.g. "models/gemini-1.5-flash"
+    return activeGeminiModel;
+}
+
 // ===== GEMINI API =====
 async function callGemini(prompt, base64Image = null) {
     const apiKey = localStorage.getItem('gemini_api_key');
     if (!apiKey) throw new Error("Missing Gemini API Key");
+
+    const modelName = await discoverModel(apiKey);
 
     const contents = [{ role: "user", parts: [{ text: prompt }] }];
     if (base64Image) {
@@ -276,7 +303,7 @@ async function callGemini(prompt, base64Image = null) {
         contents[0].parts.unshift({ inlineData: { data: base64Data, mimeType: mimeType } });
     }
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents })
