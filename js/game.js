@@ -390,10 +390,10 @@ Do NOT return anything other than the JSON array.`;
                 
                 // Safety check for bbox
                 if (!q.bbox) q.bbox = {top: 0, left: 0, bottom: 100, right: 100};
-                let top = Math.max(0, (q.bbox.top / 100) - 0.05) * canvas.height;
-                let left = Math.max(0, (q.bbox.left / 100) - 0.05) * canvas.width;
-                let bottom = Math.min(1, (q.bbox.bottom / 100) + 0.05) * canvas.height;
-                let right = Math.min(1, (q.bbox.right / 100) + 0.05) * canvas.width;
+                let top = Math.max(0, (q.bbox.top / 100) - 0.01) * canvas.height;
+                let left = Math.max(0, (q.bbox.left / 100) - 0.01) * canvas.width;
+                let bottom = Math.min(1, (q.bbox.bottom / 100) + 0.01) * canvas.height;
+                let right = Math.min(1, (q.bbox.right / 100) + 0.01) * canvas.width;
                 
                 cropCanvas.width = right - left;
                 cropCanvas.height = bottom - top;
@@ -624,18 +624,24 @@ function nextQuestion() {
     
     const q = hostGameState.questions[hostGameState.currentQIndex];
     hostGameState.qStartTime = Date.now();
+    const timerSeconds = q.marks * 60;
+    
+    // Set a timeout to automatically end the round if time runs out
+    clearTimeout(hostGameState.roundTimeout);
+    hostGameState.roundTimeout = setTimeout(endRound, timerSeconds * 1000);
     
     broadcast('show_question', {
         question_number: hostGameState.currentQIndex + 1,
         total_questions: hostGameState.questions.length,
         marks: q.marks,
-        timer_seconds: q.marks * 60,
+        timer_seconds: timerSeconds,
         image_url: q.image,
         question_text: q.text
     });
 }
 
 function endRound() {
+    clearTimeout(hostGameState.roundTimeout);
     const scores = Object.values(hostGameState.players).sort((a,b) => b.score - a.score);
     broadcast('round_results', {
         scores: scores.map(s => ({name: s.name, score: s.score, round_points: s.round_points || 0})),
