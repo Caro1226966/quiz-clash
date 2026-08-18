@@ -326,18 +326,28 @@ async function processPDF(file) {
     document.getElementById('upload-status-text').textContent = "AI analyzing questions...";
     const questions = [];
     
-    const prompt = `You are analyzing exam paper pages. For each question you find, extract:
-1. question_number (number)
-2. marks (integer, look for patterns like [3 marks], (3). Default 2 if not found)
-3. text (full text of question)
-4. bbox (bounding box as percentage {top, left, bottom, right} 0-100)
-Return a JSON array of these objects. Include all questions.`;
+    const prompt = `You are analyzing exam paper pages. Identify all individual questions on this page.
+For each question, extract:
+1. "question_number": The number or letter of the question (e.g. 1, 2a, etc.)
+2. "marks": The integer number of marks the question is worth (e.g., look for "[3 marks]", "(3)", etc.). If not found, use 2.
+3. "text": The full text of the question.
+4. "bbox": The bounding box of the question as percentage coordinates from 0 to 100: {"top": X, "left": Y, "bottom": Z, "right": W}.
+
+CRITICAL: You MUST return a valid JSON array of these objects. If there are no questions on the page, return an empty array: []
+Do NOT return anything other than the JSON array.`;
 
     for (let i = 0; i < pageImages.length; i++) {
         document.getElementById('upload-detail-text').textContent = `Page ${i+1}/${pageImages.length}`;
         try {
             const result = await callGemini(prompt, pageImages[i].dataUrl);
-            const parsed = parseGeminiJson(result);
+            let parsed = [];
+            try {
+                 parsed = parseGeminiJson(result);
+            } catch (jsonErr) {
+                 console.warn("Failed to parse Gemini output for page " + (i+1) + ":", result);
+                 continue; // Skip this page if we can't parse it
+            }
+            if (!Array.isArray(parsed)) parsed = [parsed];
             
             // Crop images and solve
             for (let q of parsed) {
